@@ -1,6 +1,7 @@
 import { mocked } from 'jest-mock';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SIGNATURE_CONCURRENCY, TestRunsService } from './test-runs.service';
+import { SIGNATURE_LENGTH } from '../compare/libs/pixelmatch/signature.core';
 import { PrismaService } from '../prisma/prisma.service';
 import { StaticService } from '../static/static.service';
 import { TestStatus, TestRun, TestVariation } from '@prisma/client';
@@ -747,8 +748,12 @@ describe('TestRunsService', () => {
   });
 
   describe('getMatchingVariations', () => {
-    const SAME_PALETTE = [1, 0];
-    const OTHER_PALETTE = [0, 1];
+    // Full-length histograms, because a stored one is only reused when its shape
+    // matches what this build produces. Orthogonal, so they never match.
+    const histogram = (hot: number): number[] =>
+      Array.from({ length: SIGNATURE_LENGTH }, (_unused, index) => (index === hot ? 1 : 0));
+    const SAME_PALETTE = histogram(0);
+    const OTHER_PALETTE = histogram(SIGNATURE_LENGTH - 1);
 
     // A sibling of the reviewed screen. imageName doubles as the run's identity
     // in the signature mocks below, which see buffers rather than runs.
@@ -858,6 +863,28 @@ describe('TestRunsService', () => {
       const asked = built.compareGetChangeSignatureMock.mock.calls.map(([input]) => input.image.toString());
       expect(asked.sort()).toEqual([testRun.imageName, matching.imageName].sort());
       expect(result.variations.map((variation) => variation.id)).toEqual([testRun.id, matching.id]);
+    });
+
+    // A signature is a fixed-length histogram. One of the wrong length compared
+    // against one of the right length gives a similarity score computed over
+    // undefined entries — a number, silently meaningless. The same self-
+    // invalidating guard as the config stamp: if the shape moves on, recompute.
+    it.each([
+      ['the wrong length', [1, 0]],
+      ['values that are not numbers', new Array(SIGNATURE_LENGTH).fill('nope')],
+    ])('recomputes a stored signature with %s', async (_case, signature) => {
+      const stored = JSON.stringify({ threshold: 0.1, includeAA: true, signature });
+      const testRun = sibling('target', { customTags: '', changeSignature: stored });
+
+      const built = await initMatchingService({
+        testRun,
+        siblings: [],
+        signatureOf: () => SAME_PALETTE,
+      });
+
+      await built.service.getMatchingVariations(testRun.id);
+
+      expect(built.compareGetChangeSignatureMock).toHaveBeenCalled();
     });
 
     // builds ingested before the column existed, and runs compared by something

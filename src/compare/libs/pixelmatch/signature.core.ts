@@ -30,6 +30,12 @@ export interface SignatureJobOutput {
 // COLOR_BUCKETS_PER_CHANNEL^3 histogram buckets.
 const COLOR_BUCKETS_PER_CHANNEL = 4;
 
+// How many buckets a signature has. Exported so a stored one can be checked
+// against the shape this build produces: comparing signatures of two different
+// lengths yields a similarity score computed over undefined entries — a number,
+// and a meaningless one.
+export const SIGNATURE_LENGTH = COLOR_BUCKETS_PER_CHANNEL ** 3;
+
 // Longest side (px) images are downscaled to before computing the color
 // signature — keeps the histogram representative while cutting pixelmatch cost.
 const SIGNATURE_MAX_DIMENSION = 500;

@@ -15,7 +15,7 @@ import { UpdateTestRunDto } from './dto/update-test.dto';
 import { parseConfig } from '../compare/utils';
 import { DEFAULT_CONFIG } from '../compare/libs/pixelmatch/pixelmatch.service';
 import { PixelmatchConfig } from '../compare/libs/pixelmatch/pixelmatch.types';
-import { signaturesMatch } from '../compare/libs/pixelmatch/signature.core';
+import { signaturesMatch, SIGNATURE_LENGTH } from '../compare/libs/pixelmatch/signature.core';
 
 @Injectable()
 export class TestRunsService {
@@ -366,7 +366,10 @@ export class TestRunsService {
     return this.findOne(id);
   }
 
-  async saveDiffResult(id: string, diffResult: DiffResult): Promise<TestRun> {
+  // Nullable because it genuinely is: a comparison that produced nothing at all
+  // clears the row back to "new". The body has always handled that; the
+  // signature just did not say so.
+  async saveDiffResult(id: string, diffResult: DiffResult | null): Promise<TestRun> {
     return this.prismaService.testRun
       .update({
         where: { id },
@@ -708,7 +711,14 @@ function parseStoredSignature(
   }
   try {
     const parsed: StampedSignature = JSON.parse(stored);
-    if (!Array.isArray(parsed?.signature) || parsed.signature.length === 0) {
+    // Shape first: a histogram of the wrong length, or one carrying anything
+    // that is not a number, compares against a current signature to produce a
+    // score that looks fine and means nothing. Recomputing is always safe.
+    const wellFormed =
+      Array.isArray(parsed?.signature) &&
+      parsed.signature.length === SIGNATURE_LENGTH &&
+      parsed.signature.every((value) => typeof value === 'number' && Number.isFinite(value));
+    if (!wellFormed) {
       return null;
     }
     const sameConfig = parsed.threshold === config.threshold && parsed.includeAA === config.ignoreAntialiasing;
